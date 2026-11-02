@@ -327,7 +327,7 @@ jobs:
                   for idx in range(count):
                       pos = idx * 32
                       sector_offset, streaming_sectors, archive_sectors = struct.unpack_from("<IHH", directory, pos)
-                      name_raw = directory[pos + 8:pos + 32].split(b"\\x00", 1)[0]
+                      name_raw = directory[pos + 8:pos + 32].split(b"\x00", 1)[0]
                       name = name_raw.decode("latin-1", "replace")
                       seen_names[name.lower()] += 1
                       parsed.append({
