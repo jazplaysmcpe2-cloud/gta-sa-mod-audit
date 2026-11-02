@@ -9,7 +9,7 @@ This matrix separates the contents that exist in the archives from components th
 | CLEO scripts | 25 scripts: 12 .csa, 13 .csi | Script files are present and inventoried; runtime cannot load their supplied 32-bit CLEO library | **Preserve, do not delete; execution blocked** |
 | SAUtils | Yes | Supplied .so is ELF32 ARM; upstream source has 2.00 / 2.10 branches, no 2.11.311 branch found | **Blocked** |
 | JPatch | Yes | Supplied .so is ELF32 ARM | **Blocked** |
-| SA_DOX 2.0 DX3 | Four presets | All five nested archives extract; libSDX.so is ELF32 ARM | **Blocked on 2.11.311** |
+| SA_DOX 2.0 DX3 | Four presets | All five nested archives extract; libSDX.so is ELF32 ARM. Standalone bloom shaders are functional; V8 optional bloom shader versions are no-op placeholders | **Blocked on 2.11.311** |
 | GTA V-style menu | Optional V8 folder, 11 files | Texture database files are present; no live test against 2.11.311 texture loader | **Candidate static asset only; unverified** |
 | V8 base data / models / IMG / animation | Yes | All 9 IMG VER2 archives parse; no internal duplicate names. No clean 2.11.311 baseline was supplied for binary comparison | **Do not wholesale-overlay; target compatibility unverified** |
 | V8 traffic-density choice | Main + Busy + Low | Main and Busy popcycle.dat are SHA-identical; Low is different | **Choose one only; Busy is realism-first candidate** |
@@ -53,3 +53,11 @@ This future-base checklist does not authorize changing the requested 2.11.311 ga
 - [Full deep-inspection run 6](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41505606444)
 - [Merge plan](../merge-plan/README.md)
 - [Archive release](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/releases/tag/v1.0)
+
+## SA_DOX shader choice
+
+The V8 optional SA_DOX folder's bloom downsample/upsample shaders are no-op placeholders (off-screen vertex position plus fragment discard). The standalone Saadox preset versions contain actual bloom sampling code. For a supported runtime, choose the complete standalone preset, not V8's optional folder and not a file-by-file hybrid.
+
+The SAUtils upstream project has a 64-bit build path, but the source selects GTA SA 2.10 initialization for that path; the V8 archive contains only the 32-bit library. No 2.11.311 branch was found in the inspected source:
+- [SAUtils Android.mk](https://github.com/AndroidModLoader/SAUtils/blob/main/Android.mk)
+- [SAUtils main.cpp](https://github.com/AndroidModLoader/SAUtils/blob/main/main.cpp)
