@@ -556,12 +556,10 @@ jobs:
           ultra = ultra_candidates[0]
 
           # Use the standalone Saadox libSDX, not V8's optional legacy copy.
-          sdx_candidates = []
-          for scan_root, origin, depth in roots:
-              if origin.startswith("sabox-2-0-in-directx"):
-                  candidate = scan_root / "SA DOX 2.0" / "2. Mod" / "libSDX.so"
-                  if candidate.is_file():
-                      sdx_candidates.append(candidate)
+          sdx_candidates = [
+              p for p in (base / "nested-extracted").rglob("libSDX.so")
+              if p.relative_to(base / "nested-extracted").parts[-3:] == ("SA DOX 2.0", "2. Mod", "libSDX.so")
+          ]
           if len(sdx_candidates) != 1:
               raise SystemExit(f"Expected one standalone Saadox libSDX.so, got: {sdx_candidates}")
 
