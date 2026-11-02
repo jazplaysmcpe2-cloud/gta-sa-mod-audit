@@ -45,3 +45,8 @@ Only redistribute files with permission from their authors. Keep source archives
 - [Compatibility matrix for GTA SA 2.11.311](audit/compatibility-matrix.md)
 - [Full merge plan and conflict decisions](merge-plan/README.md)
 - [Deep inspection run 6 and reports](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41505606444)
+
+
+## POCO F6 warning
+
+The 32-bit AML 2.00 package is for devices/ROMs that expose `armeabi-v7a`. On POCO F6, first run `getprop ro.product.cpu.abilist` in Termux. If `armeabi-v7a` is absent, the phone's installed ROM cannot run this package; a downgrade of the game APK does not add 32-bit ABI support. See the [compatibility matrix](audit/compatibility-matrix.md).
