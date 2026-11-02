@@ -535,7 +535,9 @@ jobs:
 
           base = pathlib.Path(".").resolve()
           v8_roots = list((base / "extracted").rglob("com.rockstargames.gtasa"))
-          v8_roots = [p for p in v8_roots if (p / "mods").is_dir() and (p / "files").is_dir()]
+          v8_roots = [p for p in v8_roots
+                      if p.parent.name == "GTA V Project Modpack V8"
+                      and (p / "mods").is_dir() and (p / "files").is_dir()]
           if len(v8_roots) != 1:
               raise SystemExit(f"Expected one V8 game-data root, got: {v8_roots}")
           v8 = v8_roots[0]
