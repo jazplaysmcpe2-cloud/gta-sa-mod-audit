@@ -61,3 +61,19 @@ The V8 optional SA_DOX folder's bloom downsample/upsample shaders are no-op plac
 The SAUtils upstream project has a 64-bit build path, but the source selects GTA SA 2.10 initialization for that path; the V8 archive contains only the 32-bit library. No 2.11.311 branch was found in the inspected source:
 - [SAUtils Android.mk](https://github.com/AndroidModLoader/SAUtils/blob/main/Android.mk)
 - [SAUtils main.cpp](https://github.com/AndroidModLoader/SAUtils/blob/main/main.cpp)
+
+
+## POCO F6 device ABI gate
+
+The POCO F6's published CPU configuration is 1×Cortex-X4, 4×Cortex-A720 and 3×Cortex-A520. Arm identifies the Cortex-A720 and A520 as AArch64-only cores. This means the hardware has no native AArch32 execution path; 32-bit APKs require an OS-level binary translation layer. There are user reports of India/Global POCO F6 builds rejecting 32-bit-only APKs with `INSTALL_FAILED_NO_MATCHING_ABIS`, while reports of limited 32-bit compatibility concern particular ROM versions/regions and should not be generalized.
+
+Before trying this package on the POCO F6, run this in Termux:
+
+```sh
+getprop ro.product.cpu.abilist
+```
+
+- If `armeabi-v7a` appears, the Android runtime advertises a 32-bit ABI; the APK may install, but game/mod runtime compatibility is still not guaranteed.
+- If it lists only `arm64-v8a`, stop: a 32-bit GTA SA 2.00 APK and the included 32-bit plugin binaries cannot run on that installed ROM. Installing an older APK cannot add a missing ABI.
+
+Sources: [POCO F6 official CPU specs](https://www.po.co/global/product/poco-f6/specs/), [Arm Cortex-A720](https://www.arm.com/products/silicon-ip-cpu/cortex-a/cortex-a720), [Arm Cortex-A520](https://www.arm.com/products/silicon-ip-cpu/cortex-a/cortex-a520), [POCO F6 India community report](https://www.reddit.com/r/PocoPhones/comments/1en6qgo/32bit_apps_on_poco_f6/).
