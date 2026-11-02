@@ -18,7 +18,7 @@ jobs:
       - name: Install archive tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y 7zip 7zip-rar file
+          sudo apt-get install -y 7zip 7zip-rar file binutils
 
       - name: Download release assets
         env:
@@ -242,6 +242,32 @@ jobs:
           write_csv("cleo-script-inventory.csv", cleo,
                     ["source_archive", "archive_relative_path", "extension", "bytes", "sha256"])
 
+          # Dynamic-link dependencies, SONAMEs and embedded version clues.
+          native_details = []
+          for row in manifest:
+              if row["extension"] != ".so" or not row["absolute_path"]:
+                  continue
+              p = pathlib.Path(row["absolute_path"])
+              dyn = subprocess.run(["readelf", "-d", str(p)], stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, errors="replace")
+              dyn_lines = [ln.strip() for ln in dyn.stdout.splitlines()
+                           if "NEEDED" in ln or "SONAME" in ln or "RPATH" in ln or "RUNPATH" in ln]
+              raw = p.read_bytes()
+              embedded = sorted({x.decode("ascii", "ignore") for x in re.findall(rb"[ -~]{5,}", raw)
+                                 if re.search(rb"(?i)aml|cleo|sautils|jpatch|version|gtasa|2\\.00|2\\.10|2\\.11", x)})
+              native_details.append({
+                  "library": row["filename"],
+                  "source_archive": row["source_archive"],
+                  "path": row["archive_relative_path"],
+                  "readelf_exit": dyn.returncode,
+                  "dynamic_entries": " || ".join(dyn_lines),
+                  "embedded_version_strings": " || ".join(embedded[:80])
+              })
+          write_csv("native-plugin-dependencies.csv", native_details, [
+              "library", "source_archive", "path", "readelf_exit",
+              "dynamic_entries", "embedded_version_strings"
+          ])
+
           priority_names = {
               "handling.cfg", "handlingpc.cfg", "ped.ifp", "mainv1.scm",
               "scriptv1.img", "timecyc.dat", "colorcycle.dat", "popcycle.dat",
@@ -284,6 +310,41 @@ jobs:
           write_csv("text-reference-scan.csv", references,
                     ["source_archive", "path", "line", "text"])
 
+          # Bundle small human-readable configs/readmes for direct content review.
+          bundle = []
+          bundle_exts = {".ini", ".cfg", ".txt", ".log", ".fxt", ".shader", ".glsl", ".zon"}
+          for row in manifest:
+              if row["extension"] not in bundle_exts or not row["absolute_path"]:
+                  continue
+              p = pathlib.Path(row["absolute_path"])
+              try:
+                  if p.stat().st_size > 150_000:
+                      continue
+                  body = p.read_text(encoding="utf-8", errors="replace")
+                  bundle.append((row["source_archive"], row["archive_relative_path"], body))
+              except OSError:
+                  pass
+          with (REPORTS / "readable-configs-and-notes.txt").open("w", encoding="utf-8") as f:
+              for origin, rel, body in bundle:
+                  f.write("\\n" + "=" * 100 + "\\n")
+                  f.write(f"SOURCE: {origin} | FILE: {rel}\\n")
+                  f.write("=" * 100 + "\\n")
+                  f.write(body[:150_000] + "\\n")
+
+          # Extract readable embedded strings from compiled CLEO scripts.
+          with (REPORTS / "cleo-readable-strings.txt").open("w", encoding="utf-8") as f:
+              for row in manifest:
+                  if row["extension"] not in {".csa", ".csi", ".cleo", ".cs", ".lua"} or not row["absolute_path"]:
+                      continue
+                  raw = pathlib.Path(row["absolute_path"]).read_bytes()
+                  strings_found = re.findall(rb"[ -~]{4,}", raw)
+                  if strings_found:
+                      f.write("\\n" + "=" * 100 + "\\n")
+                      f.write(f'SOURCE: {row["source_archive"]} | FILE: {row["archive_relative_path"]}\\n')
+                      f.write("=" * 100 + "\\n")
+                      f.write("\\n".join(x.decode("ascii", "replace") for x in strings_found[:2000]))
+                      f.write("\\n")
+
           write_csv("nested-archive-report.csv", nested_status, [
               "origin", "archive_path", "archive_bytes", "depth", "test_exit_code",
               "extract_exit_code", "success", "files_extracted", "output", "diagnostic"
@@ -323,9 +384,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gta-sa-deep-inspection-${{ github.run_number }}
-          path: |
-            reports/
-            extracted/
-            nested-extracted/
+          path: reports/
           if-no-files-found: error
           retention-days: 30
