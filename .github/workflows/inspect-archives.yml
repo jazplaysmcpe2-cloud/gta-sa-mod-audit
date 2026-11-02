@@ -661,6 +661,7 @@ jobs:
           IMPORTANT COMPATIBILITY
           - Target: GTA SA Android 2.00 32-bit ARM with the matching AML 2.00 APK/runtime.
           - Do NOT use with GTA SA 2.10 64-bit or 2.11.311 arm64-v8a.
+          - POCO F6 WARNING: its Snapdragon 8s Gen 3 uses A64-only Cortex-X4/A720/A520 cores. A 32-bit game needs a compatible system translation layer. Before installing, run "getprop ro.product.cpu.abilist" in Termux. If the output does not contain "armeabi-v7a", this package cannot run on that ROM; stop here. Do not try random APK variants or change OBB files to bypass this.
           - No APK, game OBB, Rockstar game assets outside the uploaded mod sources, or paid game files are included.
           - Installation has not been tested on a live phone. Back up your game data and saves first.
 
