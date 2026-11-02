@@ -184,3 +184,13 @@ Every parsed IMG had zero duplicate internal entry names. This is a structural c
 A public community source snapshot for GTA SA 2.11.311 says its current work only redirects the game storage location to Android/media and explicitly hopes AML, CLEO and FASTMAN can be ported in the future. It does not provide a working AML/CLEO port. Separately, the ARM64 LuJimCLEO64 v0.2.0-alpha README says script execution, opcode interpretation, CLEO4/CLEO5 runtime and native CLEO plugins do not work yet.
 
 Therefore the architecture blocker is not solved by an available ARM64 CLEO replacement. Do not substitute an experimental scanner or an unofficial 2.10 package for the user's target version.
+
+### Shader implementation comparison
+
+The V8 optional SA_DOX copy is not interchangeable with the standalone graphics archive. Its `downsamplebloom.shader` and `upsamplebloom.shader` are no-op placeholders: the vertex stage sets `gl_Position` to an off-screen coordinate and the fragment stage discards. The standalone presets contain working multi-sample bloom shader code at the corresponding paths. This confirms the standalone package is the better visual base; do not overlay the V8 optional shader directory on it.
+
+The V8 optional folder's other shader files also differ at the same normalized SA_DOX paths. These are expected alternatives, not individual files to cherry-pick. Select one complete SA_DOX folder, not a hybrid.
+
+### SAUtils architecture branch detail
+
+The current upstream SAUtils Android.mk builds a separate `SAUtils64` library for non-`armeabi-v7a` builds, and its source dispatches the 64-bit case to the GTA SA 2.10 initialization path. This is evidence of 2.10 64-bit support, not 2.11.311 support. The V8 archive contains only its 32-bit `libSAUtils.so`. See [SAUtils Android.mk](https://github.com/AndroidModLoader/SAUtils/blob/main/Android.mk) and [SAUtils main.cpp](https://github.com/AndroidModLoader/SAUtils/blob/main/main.cpp).
