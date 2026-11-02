@@ -556,10 +556,21 @@ jobs:
           ultra = ultra_candidates[0]
 
           # Use the standalone Saadox libSDX, not V8's optional legacy copy.
-          sdx_candidates = [
-              p for p in (base / "nested-extracted").rglob("libSDX.so")
-              if p.relative_to(base / "nested-extracted").parts[-3:] == ("SA DOX 2.0", "2. Mod", "libSDX.so")
-          ]
+          expected_sdx_sha256 = "a8fa352011c8ec4a21985ec0d006da1e5943048a96705126c6e1cf5f094d8f13"
+          sdx_candidates = []
+          for search_root in (base / "nested-extracted", base / "extracted"):
+              if not search_root.exists():
+                  continue
+              for p in search_root.rglob("*"):
+                  if p.is_file() and p.name.lower() == "libsdx.so":
+                      digest = hashlib.sha256(p.read_bytes()).hexdigest()
+                      if digest == expected_sdx_sha256:
+                          sdx_candidates.append(p)
+          # Prefer the copy extracted from the standalone Saadox RAR; both source copies
+          # were proven byte-identical during the archive audit.
+          standalone = [p for p in sdx_candidates if p.is_relative_to(base / "nested-extracted")]
+          if standalone:
+              sdx_candidates = standalone
           if len(sdx_candidates) != 1:
               raise SystemExit(f"Expected one standalone Saadox libSDX.so, got: {sdx_candidates}")
 
