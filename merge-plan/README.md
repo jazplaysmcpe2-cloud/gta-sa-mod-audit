@@ -24,7 +24,7 @@ Source release: [v1.0](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/r
 
 The recursive scan verified and extracted all five nested archives. It indexed 771 files (about 3.08 GB uncompressed), including 20 ELF shared-library entries and 25 CLEO scripts. No nested archive failed extraction.
 
-Full compact report: [deep-inspection run 4](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41504597074). A later run adds IMG indexing and raw ZIP duplicate-entry checks.
+Full compact report: [deep-inspection run 4](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41504597074). Run 6 adds IMG indexing and raw ZIP duplicate-entry checks.
 
 ## Native plugin audit
 
@@ -145,3 +145,42 @@ For the requested 2.11.311 target, the path forward is to obtain or build ARM64 
 - [AndroidModLoader SAUtils source](https://github.com/AndroidModLoader/SAUtils) — version-specific initialization branches.
 - [SA_DOX Android compatibility / installation guide](https://cheeseburgersmod.blogspot.com/2025/02/how-to-use-properly-on-sadox-20-android.html) — incompatible plugins, scripts and required plugins.
 - [Saadox 2.0 DirectX 3.0 package page](https://www.gtainside.com/en/sanandreas/mods/219642-sa-do-x-2-0-in-directx-3-0-graphics-style) — four quality presets and graphics goals.
+
+
+## Deep inspection run 6 — completed
+
+[GitHub Actions run 6](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41505606444) completed successfully. Its report artifact is `gta-sa-deep-inspection-6` (520,870 bytes; available through 2026-12-02).
+
+Verified scan results:
+- 771 files indexed, 3,083,717,961 uncompressed bytes.
+- All 5 nested archives tested and extracted successfully.
+- 20 shared-library entries, all ELF32 / ARM.
+- 25 CLEO scripts: 12 .csa and 13 .csi.
+- 9 GTA IMG VER2 archives parsed, 17,157 directory entries, no duplicate names inside any IMG.
+- 6 ZIP archives inspected, no duplicate member paths and no encrypted members.
+- 96 identical-SHA duplicate groups.
+- 81 normalized target-path collision groups: 55 exact-content duplicates and 26 different-content alternatives. The 26 alternatives are 25 SA_DOX paths (V8 optional SA_DOX versus standalone SA_DOX) plus the single data/popcycle.dat traffic-density choice. The SA_DOX differences are expected alternatives, not 25 independent game-data conflicts.
+
+### GTA V-style menu option
+
+V8 includes a separate optional folder named `Menu GTA V Style` containing 11 files under `texdb/menu/`, including `menu.txt` and the DXT / ETC / PVR texture database files. Its three `.dat` variants are byte-identical, as are the `.tmb` and `.toc` variants. Keep the complete variant set intact unless a target-game texture-loader test proves that a format can be omitted. This menu pack is the clearest non-CLEO GTA V-style menu asset in the archive; it is still untested on 2.11.311.
+
+### IMG archive contents
+
+All nine V8 IMG archives passed VER2 directory parsing:
+- `anim/anim.img`: 133 animation entries.
+- `anim/cuts.img`: 444 cutscene entries (148 .ifp, 148 .cut, 148 .dat).
+- `data/paths/carrec.img`: 426 vehicle-record entries.
+- The two `scriptv1.img` copies each contain 79 .scm files and are byte-identical (SHA-256 `146358135eadab2e09cc4d9877a8366552b575cb482e4f667935899e14ac7954`).
+- `texdb/cutscene.img`: 317 entries.
+- `texdb/gta3.img`: 13,557 entries (12,964 .dff, 216 .col, 164 .ipl, 149 .ifp, 64 .dat).
+- `texdb/gta_int.img`: 1,967 entries.
+- `texdb/player.img`: 155 entries.
+
+Every parsed IMG had zero duplicate internal entry names. This is a structural check, not a comparison against an untouched 2.11.311 base game. Without a matching clean base archive, we cannot prove which of the 17,157 entries were modified versus original game content.
+
+### 2.11.311 port status
+
+A public community source snapshot for GTA SA 2.11.311 says its current work only redirects the game storage location to Android/media and explicitly hopes AML, CLEO and FASTMAN can be ported in the future. It does not provide a working AML/CLEO port. Separately, the ARM64 LuJimCLEO64 v0.2.0-alpha README says script execution, opcode interpretation, CLEO4/CLEO5 runtime and native CLEO plugins do not work yet.
+
+Therefore the architecture blocker is not solved by an available ARM64 CLEO replacement. Do not substitute an experimental scanner or an unofficial 2.10 package for the user's target version.
