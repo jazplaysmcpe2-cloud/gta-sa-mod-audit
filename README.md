@@ -22,7 +22,7 @@ The archives have been downloaded, verified, recursively extracted and hash-inde
 
 - [Release v1.0](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/releases/tag/v1.0)
 - [Latest workflow runs](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions)
-- [Deep-inspection run 4](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41504597074)
+- [Deep-inspection run 6](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41505606444)
 
 The audit indexes file hashes, nested archive extraction, .so ELF architecture and dependencies, CLEO script names/strings, configurations, duplicate contents, target-path collisions, and (in the newest workflow revision) GTA IMG entries and raw ZIP central-directory duplicates.
 
@@ -32,8 +32,8 @@ The audit indexes file hashes, nested archive extraction, .so ELF architecture a
 - The Saadox archive contains Low, Medium, High and Ultra presets; all share the same 78 of 80 files. Only Advanced.ini and shaderUniform.ini differ.
 - Saadox Ultra is the visual-priority preset for a compatible base. Do not combine its configuration with V8's separate optional SA_DOX folder.
 - SA_DOX's published Android guide warns against V8's GPS, MoreSettings, Project2DFX, Planter and SkyGFXMobile plugins.
-- The extracted game-target collision is data/popcycle.dat: main/Busy are identical; Low traffic is a different alternative.
-- Full installation and in-game performance testing have not been performed.
+- The only non-SA_DOX target collision is data/popcycle.dat: main/Busy are identical; Low traffic is a different alternative. The other different-content collision groups are the V8 optional SA_DOX variant versus the standalone presets.
+- All nine V8 IMG archives were parsed (17,157 entries; no duplicate IMG names). Six ZIP archives had no duplicate member paths. Full installation and in-game performance testing have not been performed.
 
 ## Redistribution
 
