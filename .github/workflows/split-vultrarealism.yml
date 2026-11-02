@@ -1,0 +1,91 @@
+name: Split VUltraRealism Mod for direct download
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/split-vultrarealism.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  split-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download verified package artifact from build run 14
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p incoming parts
+          gh run download 41509704000 --repo "${GITHUB_REPOSITORY}" --name gta-sa-deep-inspection-14 --dir incoming
+          PACKAGE="$(find incoming -type f -name 'VUltraRealism Mod.zip' -print -quit)"
+          test -n "$PACKAGE"
+          echo "SOURCE_PACKAGE=$PACKAGE"
+          stat -c 'SOURCE_PACKAGE_BYTES=%s' "$PACKAGE"
+          split --bytes=300000000 --numeric-suffixes=0 --suffix-length=2 "$PACKAGE" parts/VUltraRealism-Mod.part
+          sha256sum parts/VUltraRealism-Mod.part* > parts/SHA256SUMS.txt
+          printf 'Original package bytes: %s\n' "$(stat -c '%s' "$PACKAGE")" > parts/PACKAGE-INFO.txt
+          printf 'Part size: 300000000 bytes except final part\n' >> parts/PACKAGE-INFO.txt
+          ls -lh parts
+          PART_COUNT="$(find parts -maxdepth 1 -type f -name 'VUltraRealism-Mod.part*' | wc -l)"
+          test "$PART_COUNT" -eq 5
+
+      - name: Upload package part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: VUltraRealism-Mod-part-00
+          path: parts/VUltraRealism-Mod.part00
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload package part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: VUltraRealism-Mod-part-01
+          path: parts/VUltraRealism-Mod.part01
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload package part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: VUltraRealism-Mod-part-02
+          path: parts/VUltraRealism-Mod.part02
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload package part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: VUltraRealism-Mod-part-03
+          path: parts/VUltraRealism-Mod.part03
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload package part 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: VUltraRealism-Mod-part-04
+          path: parts/VUltraRealism-Mod.part04
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload checksum and package information
+        uses: actions/upload-artifact@v4
+        with:
+          name: VUltraRealism-Mod-checksums
+          path: |
+            parts/SHA256SUMS.txt
+            parts/PACKAGE-INFO.txt
+          if-no-files-found: error
+          retention-days: 30
