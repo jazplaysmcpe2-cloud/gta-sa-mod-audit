@@ -1,0 +1,89 @@
+name: Inspect GTA SA mod archives
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Download release ZIP assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p archives inventory
+          gh release download v1.0 --repo "${GITHUB_REPOSITORY}" --pattern "*.zip" --dir archives
+
+      - name: Generate ZIP inventories
+        run: |
+          python3 - <<'PY'
+          import collections
+          import json
+          import pathlib
+          import zipfile
+
+          archives = pathlib.Path("archives")
+          output = pathlib.Path("inventory")
+          output.mkdir(exist_ok=True)
+
+          for archive in sorted(archives.glob("*.zip")):
+              with zipfile.ZipFile(archive) as zf:
+                  infos = zf.infolist()
+                  counts = collections.Counter()
+                  total_uncompressed = 0
+                  lines = [
+                      f"ARCHIVE: {archive.name}",
+                      f"ENTRIES: {len(infos)}",
+                      "",
+                      "PATH\tUNCOMPRESSED_BYTES\tCOMPRESSED_BYTES\tCRC32\tFLAGS"
+                  ]
+                  for info in infos:
+                      if info.is_dir():
+                          continue
+                      total_uncompressed += info.file_size
+                      suffix = pathlib.PurePosixPath(info.filename).suffix.lower() or "[no extension]"
+                      counts[suffix] += 1
+                      flags = []
+                      if info.flag_bits & 1:
+                          flags.append("ENCRYPTED")
+                      if info.flag_bits & 0x800:
+                          flags.append("UTF8")
+                      lines.append(
+                          f"{info.filename}\t{info.file_size}\t{info.compress_size}\t"
+                          f"{info.CRC:08x}\t{','.join(flags) or '-'}"
+                      )
+
+                  lines += [
+                      "",
+                      f"TOTAL_UNCOMPRESSED_BYTES: {total_uncompressed}",
+                      "FILE_COUNTS_BY_EXTENSION:",
+                  ]
+                  lines += [f"{ext}\t{count}" for ext, count in sorted(counts.items())]
+                  target = output / f"{archive.stem}.inventory.txt"
+                  target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+                  # Machine-readable summary for a second validation pass.
+                  summary = {
+                      "archive": archive.name,
+                      "entries": len(infos),
+                      "files": sum(1 for i in infos if not i.is_dir()),
+                      "total_uncompressed_bytes": total_uncompressed,
+                      "extensions": dict(sorted(counts.items())),
+                      "encrypted_files": [i.filename for i in infos if not i.is_dir() and (i.flag_bits & 1)],
+                  }
+                  (output / f"{archive.stem}.summary.json").write_text(
+                      json.dumps(summary, indent=2), encoding="utf-8"
+                  )
+          PY
+
+      - name: Upload inventory reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: gta-sa-archive-inventories
+          path: inventory/
+          if-no-files-found: error
+          retention-days: 14
