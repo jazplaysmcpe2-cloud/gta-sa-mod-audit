@@ -524,10 +524,250 @@ jobs:
           print(json.dumps(summary, indent=2))
           PY
 
+      - name: Assemble VUltraRealism Mod for AML GTA SA 2.00 (32-bit)
+        run: |
+          python3 - <<'PY'
+          import csv
+          import hashlib
+          import pathlib
+          import shutil
+          import zipfile
+
+          base = pathlib.Path(".").resolve()
+          v8_roots = list((base / "extracted").rglob("com.rockstargames.gtasa"))
+          v8_roots = [p for p in v8_roots if (p / "mods").is_dir() and (p / "files").is_dir()]
+          if len(v8_roots) != 1:
+              raise SystemExit(f"Expected one V8 game-data root, got: {v8_roots}")
+          v8 = v8_roots[0]
+
+          # Locate the standalone Saadox Ultra preset by its distinctive 75% render scale.
+          ultra_candidates = []
+          for ini in (base / "nested-extracted").rglob("SA_DOX/Advanced.ini"):
+              try:
+                  text = ini.read_text(encoding="utf-8", errors="replace")
+              except OSError:
+                  continue
+              if "iResolutionScale = 75" in text:
+                  ultra_candidates.append(ini.parent)
+          if len(ultra_candidates) != 1:
+              raise SystemExit(f"Expected one standalone Saadox Ultra SA_DOX folder, got: {ultra_candidates}")
+          ultra = ultra_candidates[0]
+
+          # Use the standalone Saadox libSDX, not V8's optional legacy copy.
+          sdx_candidates = [
+              p for p in (base / "extracted").rglob("libSDX.so")
+              if "SA DOX 2.0" in str(p) and "2. Mod" in str(p)
+          ]
+          if len(sdx_candidates) != 1:
+              raise SystemExit(f"Expected one standalone Saadox libSDX.so, got: {sdx_candidates}")
+
+          out = base / "dist"
+          root = out / "VUltraRealism Mod"
+          game = root / "Android" / "data" / "com.rockstargames.gtasa"
+          files_out = game / "files"
+          mods_out = game / "mods"
+          configs_out = game / "configs"
+          disabled_out = root / "OPTIONAL - Disabled SA_DOX Conflicts" / "mods"
+          for d in [files_out, mods_out, configs_out, disabled_out]:
+              d.mkdir(parents=True, exist_ok=True)
+
+          # Install the full V8 game-file overlay, but never its optional SA_DOX fork.
+          shutil.copytree(v8 / "files", files_out, dirs_exist_ok=True)
+
+          # Explicitly remove any V8 SA_DOX directory if it exists in the base files tree.
+          v8_sadox = files_out / "SA_DOX"
+          if v8_sadox.exists():
+              shutil.rmtree(v8_sadox)
+
+          # Apply the complete standalone Ultra preset.
+          shutil.copytree(ultra, files_out / "SA_DOX", dirs_exist_ok=True)
+
+          # GTA V-style main menu texture database from V8's optional menu pack.
+          menu_candidates = list((base / "extracted").rglob("Menu GTA V Style/Android_unprotected/data/com.rockstargames.gtasa/files/texdb/menu"))
+          if len(menu_candidates) != 1:
+              raise SystemExit(f"Expected one GTA V-style menu asset directory, got: {menu_candidates}")
+          shutil.copytree(menu_candidates[0], files_out / "texdb" / "menu", dirs_exist_ok=True)
+
+          # Retain V8 CLEO scripts and their text resources. Do not include logs or save/settings files.
+          cleo_exts = {".csa", ".csi", ".fxt"}
+          cleo_files = [p for p in v8.iterdir() if p.is_file() and p.suffix.lower() in cleo_exts]
+          if len([p for p in cleo_files if p.suffix.lower() in {".csa", ".csi"}]) != 25:
+              raise SystemExit("CLEO source set did not contain the expected 25 .csa/.csi scripts")
+          for p in cleo_files:
+              shutil.copy2(p, game / p.name)
+
+          # Plugins documented as incompatible with SA_DOX are preserved separately,
+          # but intentionally not placed in the active mods directory.
+          disabled = {
+              "libGPS.so",
+              "libMoreSettings.so",
+              "libProject2DFX.so",
+              "libSAPlanter.so",
+              "libSkyGFXMobile.so",
+          }
+          active_plugins = []
+          for p in sorted((v8 / "mods").glob("*.so")):
+              if p.name in disabled:
+                  shutil.copy2(p, disabled_out / p.name)
+              else:
+                  shutil.copy2(p, mods_out / p.name)
+                  active_plugins.append(p.name)
+          shutil.copy2(sdx_candidates[0], mods_out / "libSDX.so")
+
+          # Copy the V8 configs except configs belonging to disabled plugins.
+          disabled_config_names = {
+              "net.dk22pac.rusjj.gps.ini",
+              "net.rusjj.gtasa.moresettings.ini",
+              "SkyGFXMobile.ini",
+          }
+          for p in sorted((v8 / "configs").glob("*")):
+              if not p.is_file() or p.name in disabled_config_names:
+                  continue
+              shutil.copy2(p, configs_out / p.name)
+
+          # Use V8's main Busy traffic popcycle; it was verified byte-identical to its Busy preset.
+          busy = list((base / "extracted").rglob("Busy traffic cheat/Android_unprotected/data/com.rockstargames.gtasa/files/data/popcycle.dat"))
+          if len(busy) != 1:
+              raise SystemExit(f"Expected one Busy traffic popcycle.dat, got: {busy}")
+          shutil.copy2(busy[0], files_out / "data" / "popcycle.dat")
+
+          # Preserve excluded plugin binaries and tell the user why they are not active.
+          disabled_note = root / "OPTIONAL - Disabled SA_DOX Conflicts" / "README.txt"
+          disabled_note.write_text(
+              "These original V8 plugin binaries are intentionally NOT installed in the active mods folder "
+              "because the Saadox Android compatibility guide lists them as incompatible with SA_DOX 2.0:\\n"
+              + "\\n".join(sorted(disabled))
+              + "\\nKeep them here as backups; do not move them to Android/data/com.rockstargames.gtasa/mods "
+              "while using SA_DOX.\\n",
+              encoding="utf-8"
+          )
+
+          # Build precise package inventory and SHA-256 manifest.
+          manifest = []
+          for p in sorted(root.rglob("*")):
+              if not p.is_file():
+                  continue
+              rel = p.relative_to(root).as_posix()
+              h = hashlib.sha256(p.read_bytes()).hexdigest()
+              manifest.append((rel, p.stat().st_size, h))
+          with (root / "MANIFEST-SHA256.csv").open("w", newline="", encoding="utf-8") as f:
+              w = csv.writer(f)
+              w.writerow(["path", "bytes", "sha256"])
+              w.writerows(manifest)
+
+          readme = """VULTRAREALISM MOD
+          Personal-use merged data package for GTA San Andreas Android AML 2.00 (32-bit ARM / armeabi-v7a).
+
+          IMPORTANT COMPATIBILITY
+          - Target: GTA SA Android 2.00 32-bit ARM with the matching AML 2.00 APK/runtime.
+          - Do NOT use with GTA SA 2.10 64-bit or 2.11.311 arm64-v8a.
+          - No APK, game OBB, Rockstar game assets outside the uploaded mod sources, or paid game files are included.
+          - Installation has not been tested on a live phone. Back up your game data and saves first.
+
+          INCLUDED
+          - V8 game files/data overlay.
+          - All 25 V8 CLEO scripts (.csa/.csi) and their .fxt text files.
+          - V8 AML plugin set excluding the five plugins listed below.
+          - SAUtils, AML Limit Adjuster and JPatch are retained.
+          - Standalone Saadox 2.0 DX3 Ultra preset and its libSDX.so.
+          - GTA V-style menu texture database.
+          - Busy traffic popcycle.dat.
+          - Disabled original plugin backups (kept outside the active mods folder).
+
+          WHY FIVE PLUGINS ARE DISABLED
+          The Saadox Android compatibility guide lists these as incompatible with SA_DOX:
+          libGPS.so, libMoreSettings.so, libProject2DFX.so, libSAPlanter.so, libSkyGFXMobile.so.
+          Their .so files are preserved in OPTIONAL - Disabled SA_DOX Conflicts/mods/.
+          Do not copy those backups into the active mods folder while SA_DOX is enabled.
+
+          INSTALL WITH ZARCHIVER
+          1. Install a legitimate, matching GTA SA Android 2.00 AML APK for 32-bit ARM (armeabi-v7a).
+             Do not use the current 2.11.311 Play Store build. Do not mix APK/OBB from different builds.
+          2. Put the matching original game OBB files in:
+             /storage/emulated/0/Android/obb/com.rockstargames.gtasa/
+             Keep their original filenames. For the classic 2.00 package, community reports commonly show
+             main.8.com.rockstargames.gtasa.obb and patch.8.com.rockstargames.gtasa.obb; use the exact
+             files supplied with your own legitimate 2.00 installation/backup, not renamed files.
+          3. Launch the game once, wait for it to reach the main menu, then close it completely.
+          4. In ZArchiver, open this ZIP and enter its VUltraRealism Mod folder.
+          5. Open the Android folder inside it. Copy the data folder to phone storage /Android/.
+             The final destination must be:
+             /storage/emulated/0/Android/data/com.rockstargames.gtasa/
+             Merge with the existing package folder and choose overwrite/replace for mod files when prompted.
+             Do not delete the whole Android/data/com.rockstargames.gtasa folder.
+          6. Confirm the final paths include:
+             Android/data/com.rockstargames.gtasa/mods/
+             Android/data/com.rockstargames.gtasa/configs/
+             Android/data/com.rockstargames.gtasa/files/SA_DOX/
+             Android/data/com.rockstargames.gtasa/GTA V Hud.csa
+          7. Launch the game. Give the first load extra time. Check SA_DOX log/config files if the graphics
+             renderer does not initialize. If the game crashes, restore the backup before removing plugins.
+
+          ANDROID 13-16 / ZARCHIVER ACCESS
+          ZArchiver needs storage permission. For Android/data, use its system folder picker and grant the
+          requested folder access when Android allows it. On some recent security-patch builds Android blocks
+          direct third-party file-manager access; in that case use Shizuku with ZArchiver, or copy the folder
+          using a PC/USB file transfer. Do not repeatedly delete app data to work around permission errors.
+
+          PERFORMANCE
+          Ultra is the maximum-quality preset, not a guaranteed 60/90/100 FPS profile. If the phone overheats,
+          stutters, or crashes, switch to Saadox High by replacing the entire SA_DOX folder with the High preset
+          from the original Saadox archive. Never mix files between presets.
+
+          OBB NOTE
+          This mod ZIP does not contain or replace game OBB files. The OBB supplies the original game assets;
+          this package is an Android/data overlay plus AML mods/configs.
+          """
+          (root / "README-FIRST.txt").write_text(readme, encoding="utf-8")
+
+          # Rebuild manifest so it also contains the README.
+          manifest = []
+          for p in sorted(root.rglob("*")):
+              if p.is_file() and p.name != "MANIFEST-SHA256.csv":
+                  rel = p.relative_to(root).as_posix()
+                  h = hashlib.sha256(p.read_bytes()).hexdigest()
+                  manifest.append((rel, p.stat().st_size, h))
+          with (root / "MANIFEST-SHA256.csv").open("w", newline="", encoding="utf-8") as f:
+              w = csv.writer(f)
+              w.writerow(["path", "bytes", "sha256"])
+              w.writerows(manifest)
+
+          archive = out / "VUltraRealism Mod.zip"
+          if archive.exists():
+              archive.unlink()
+          with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as zf:
+              for p in sorted(root.rglob("*")):
+                  if p.is_file():
+                      zf.write(p, p.relative_to(out).as_posix())
+          # Structural verification and test each member CRC.
+          with zipfile.ZipFile(archive, "r") as zf:
+              bad = zf.testzip()
+              if bad:
+                  raise SystemExit(f"ZIP CRC verification failed at {bad}")
+              names = zf.namelist()
+              if not any(x.endswith("/files/SA_DOX/Advanced.ini") for x in names):
+                  raise SystemExit("Ultra SA_DOX preset missing from final ZIP")
+              if not any(x.endswith("/mods/libSDX.so") for x in names):
+                  raise SystemExit("libSDX.so missing from active mods directory")
+              if sum(1 for x in names if x.lower().endswith((".csa", ".csi"))) != 25:
+                  raise SystemExit("Expected exactly 25 CLEO scripts in final ZIP")
+          print(f"PACKAGE={archive}")
+          print(f"PACKAGE_BYTES={archive.stat().st_size}")
+          print(f"PACKAGE_FILES={len(manifest)}")
+          print(f"ACTIVE_V8_PLUGINS={len(active_plugins)}")
+          print("ACTIVE_V8_PLUGIN_NAMES=" + ",".join(active_plugins))
+          print(f"CLEO_SCRIPTS={len(cleo_files)}")
+          print("ULTRA_PRESET=" + str(ultra))
+          print("SA_DOX_LIB=" + str(sdx_candidates[0]))
+          PY
+
       - name: Upload deep-inspection reports
         uses: actions/upload-artifact@v4
         with:
           name: gta-sa-deep-inspection-${{ github.run_number }}
-          path: reports/
+          path: |
+            reports/
+            dist/VUltraRealism Mod.zip
           if-no-files-found: error
           retention-days: 30
+          compression-level: 0
