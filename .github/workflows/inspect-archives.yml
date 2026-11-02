@@ -49,6 +49,8 @@ jobs:
           import pathlib
           import re
           import subprocess
+          import struct
+          import zipfile
           from collections import defaultdict, Counter
 
           BASE = pathlib.Path(".").resolve()
@@ -132,10 +134,20 @@ jobs:
                       size = path.stat().st_size
                       lower = rel.lower()
                       marker = "com.rockstargames.gtasa/files/"
-                      target = lower.split(marker, 1)[1] if marker in lower else lower
+                      if marker in lower:
+                          target = lower.split(marker, 1)[1]
+                      else:
+                          sdx_match = re.search(r"(?:^|/)sa_dox/(.*)$", lower)
+                          if sdx_match:
+                              target = "sa_dox/" + sdx_match.group(1)
+                          elif lower.endswith("/2. mod/libsdx.so"):
+                              target = "mods/libsdx.so"
+                          else:
+                              target = lower
                       manifest.append({
                           "source_archive": origin,
                           "extraction_depth": depth,
+                          "extraction_root": str(root.relative_to(BASE)),
                           "archive_relative_path": rel,
                           "target_path": target,
                           "filename": path.name,
@@ -147,6 +159,7 @@ jobs:
                   except (OSError, PermissionError) as exc:
                       manifest.append({
                           "source_archive": origin, "extraction_depth": depth,
+                          "extraction_root": str(root.relative_to(BASE)),
                           "archive_relative_path": str(path), "target_path": "",
                           "filename": path.name, "extension": path.suffix.lower(),
                           "bytes": -1, "sha256": "", "absolute_path": "",
@@ -160,7 +173,7 @@ jobs:
                   w.writerows(rows)
 
           write_csv("all-files-sha256.csv", manifest, [
-              "source_archive", "extraction_depth", "archive_relative_path",
+              "source_archive", "extraction_depth", "extraction_root", "archive_relative_path",
               "target_path", "filename", "extension", "bytes", "sha256", "read_error"
           ])
 
@@ -185,7 +198,7 @@ jobs:
                   "distinct_hashes": len(hashes),
                   "status": "SAME_CONTENT_DUPLICATE" if len(hashes) == 1 else "CONTENT_CONFLICT",
                   "sources_and_hashes": " || ".join(
-                      f'{x["source_archive"]}:{x["archive_relative_path"]}:{x["sha256"]}' for x in entries
+                      f'{x["source_archive"]}:{x["extraction_root"]}:{x["archive_relative_path"]}:{x["sha256"]}' for x in entries
                   )
               })
           write_csv("target-path-collisions.csv", conflicts,
@@ -196,7 +209,7 @@ jobs:
               if len(entries) > 1:
                   duplicates.append({
                       "sha256": sha, "copies": len(entries),
-                      "files": " || ".join(f'{x["source_archive"]}:{x["archive_relative_path"]}' for x in entries)
+                      "files": " || ".join(f'{x["source_archive"]}:{x["extraction_root"]}:{x["archive_relative_path"]}' for x in entries)
                   })
           write_csv("identical-content-duplicates.csv", duplicates, ["sha256", "copies", "files"])
 
@@ -234,13 +247,13 @@ jobs:
                   })
               if ext in {".csa", ".csi", ".cleo", ".cs", ".lua"}:
                   cleo.append({k: row[k] for k in [
-                      "source_archive", "archive_relative_path", "extension", "bytes", "sha256"
+                      "source_archive", "extraction_root", "archive_relative_path", "extension", "bytes", "sha256"
                   ]})
 
           write_csv("native-plugins-elf.csv", native,
                     ["library", "source_archive", "path", "bytes", "elf_class", "architecture", "sha256"])
           write_csv("cleo-script-inventory.csv", cleo,
-                    ["source_archive", "archive_relative_path", "extension", "bytes", "sha256"])
+                    ["source_archive", "extraction_root", "archive_relative_path", "extension", "bytes", "sha256"])
 
           # Dynamic-link dependencies, SONAMEs and embedded version clues.
           native_details = []
@@ -277,6 +290,130 @@ jobs:
           write_csv("priority-file-review.csv", priority,
                     ["source_archive", "archive_relative_path", "target_path", "bytes", "sha256"])
 
+          # Parse GTA SA IMG VER2 directories without rewriting the archives.
+          img_rows = []
+          img_summary = []
+          for row in manifest:
+              if row["extension"] != ".img" or not row["absolute_path"]:
+                  continue
+              p = pathlib.Path(row["absolute_path"])
+              try:
+                  with p.open("rb") as stream:
+                      header = stream.read(8)
+                      if len(header) < 8 or header[:4] != b"VER2":
+                          img_summary.append({
+                              "source_archive": row["source_archive"],
+                              "extraction_root": row["extraction_root"],
+                              "archive": row["archive_relative_path"],
+                              "format": header[:4].decode("ascii", "replace"),
+                              "entries": 0,
+                              "status": "UNRECOGNIZED_OR_NOT_VER2"
+                          })
+                          continue
+                      count = struct.unpack_from("<I", header, 4)[0]
+                      if count > 1000000 or 8 + count * 32 > p.stat().st_size:
+                          img_summary.append({
+                              "source_archive": row["source_archive"],
+                              "extraction_root": row["extraction_root"],
+                              "archive": row["archive_relative_path"],
+                              "format": "VER2",
+                              "entries": count,
+                              "status": "INVALID_DIRECTORY_BOUNDS"
+                          })
+                          continue
+                      directory = stream.read(count * 32)
+                  seen_names = Counter()
+                  parsed = []
+                  for idx in range(count):
+                      pos = idx * 32
+                      sector_offset, streaming_sectors, archive_sectors = struct.unpack_from("<IHH", directory, pos)
+                      name_raw = directory[pos + 8:pos + 32].split(b"\\x00", 1)[0]
+                      name = name_raw.decode("latin-1", "replace")
+                      seen_names[name.lower()] += 1
+                      parsed.append({
+                          "source_archive": row["source_archive"],
+                          "extraction_root": row["extraction_root"],
+                          "archive": row["archive_relative_path"],
+                          "entry_index": idx,
+                          "entry_name": name,
+                          "sector_offset": sector_offset,
+                          "streaming_sectors": streaming_sectors,
+                          "archive_sectors": archive_sectors,
+                          "duplicate_name_count": 0
+                      })
+                  for entry in parsed:
+                      entry["duplicate_name_count"] = seen_names[entry["entry_name"].lower()]
+                      img_rows.append(entry)
+                  img_summary.append({
+                      "source_archive": row["source_archive"],
+                      "extraction_root": row["extraction_root"],
+                      "archive": row["archive_relative_path"],
+                      "format": "VER2",
+                      "entries": count,
+                      "duplicate_entry_names": sum(1 for n in seen_names.values() if n > 1),
+                      "status": "OK"
+                  })
+              except OSError as exc:
+                  img_summary.append({
+                      "source_archive": row["source_archive"],
+                      "extraction_root": row["extraction_root"],
+                      "archive": row["archive_relative_path"],
+                      "format": "READ_ERROR",
+                      "entries": 0,
+                      "status": str(exc)
+                  })
+          write_csv("img-archive-inventory.csv", img_rows, [
+              "source_archive", "extraction_root", "archive", "entry_index", "entry_name",
+              "sector_offset", "streaming_sectors", "archive_sectors", "duplicate_name_count"
+          ])
+          write_csv("img-archive-summary.csv", img_summary, [
+              "source_archive", "extraction_root", "archive", "format", "entries",
+              "duplicate_entry_names", "status"
+          ])
+
+          # Preserve raw ZIP central-directory details, including duplicate member paths.
+          zip_rows = []
+          zip_summaries = []
+          zip_candidates = set()
+          for search_root in [BASE / "archives", EXTRACTED, NESTED]:
+              if search_root.exists():
+                  zip_candidates.update(x for x in search_root.rglob("*.zip") if x.is_file())
+          for zp in sorted(zip_candidates):
+              try:
+                  with zipfile.ZipFile(zp) as zf:
+                      infos = [x for x in zf.infolist() if not x.is_dir()]
+                      counts = Counter(x.filename.lower() for x in infos)
+                      for info in infos:
+                          zip_rows.append({
+                              "archive": str(zp.relative_to(BASE)),
+                              "member_path": info.filename,
+                              "bytes": info.file_size,
+                              "compressed_bytes": info.compress_size,
+                              "crc32": f"{info.CRC:08x}",
+                              "encrypted": bool(info.flag_bits & 1),
+                              "duplicate_member_path_count": counts[info.filename.lower()]
+                          })
+                      zip_summaries.append({
+                          "archive": str(zp.relative_to(BASE)),
+                          "file_entries": len(infos),
+                          "duplicate_member_paths": sum(1 for n in counts.values() if n > 1),
+                          "encrypted_entries": sum(1 for x in infos if x.flag_bits & 1),
+                          "status": "OK"
+                      })
+              except Exception as exc:
+                  zip_summaries.append({
+                      "archive": str(zp.relative_to(BASE)), "file_entries": 0,
+                      "duplicate_member_paths": 0, "encrypted_entries": 0,
+                      "status": str(exc)
+                  })
+          write_csv("zip-member-inventory.csv", zip_rows, [
+              "archive", "member_path", "bytes", "compressed_bytes", "crc32",
+              "encrypted", "duplicate_member_path_count"
+          ])
+          write_csv("zip-archive-summary.csv", zip_summaries, [
+              "archive", "file_entries", "duplicate_member_paths", "encrypted_entries", "status"
+          ])
+
           terms = re.compile(
               r"2\.11\.311|2\.11|CLEO|SAUtils|SA Utils|AMLLA|JPatch|SkyGFX|"
               r"Project2DFX|SA_DOX|DirectX|GTAV|GTA V|Android|armeabi|arm64|"
@@ -301,6 +438,7 @@ jobs:
                       if terms.search(line):
                           references.append({
                               "source_archive": row["source_archive"],
+                              "extraction_root": row["extraction_root"],
                               "path": row["archive_relative_path"],
                               "line": line_no,
                               "text": line.strip()[:500]
@@ -308,7 +446,7 @@ jobs:
               except OSError:
                   pass
           write_csv("text-reference-scan.csv", references,
-                    ["source_archive", "path", "line", "text"])
+                    ["source_archive", "extraction_root", "path", "line", "text"])
 
           # Bundle small human-readable configs/readmes for direct content review.
           bundle = []
@@ -363,7 +501,11 @@ jobs:
               "target_path_collisions": len(conflicts),
               "different_content_conflicts": sum(1 for x in conflicts if x["status"] == "CONTENT_CONFLICT"),
               "identical_sha256_duplicate_groups": len(duplicates),
-              "text_reference_matches": len(references)
+              "text_reference_matches": len(references),
+              "img_archives": len(img_summary),
+              "img_directory_entries": len(img_rows),
+              "zip_archives": len(zip_summaries),
+              "zip_duplicate_member_paths": sum(x.get("duplicate_member_paths", 0) for x in zip_summaries)
           }
           (REPORTS / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
           summary_md = [
@@ -373,6 +515,8 @@ jobs:
               f'- Native .so libraries: **{len(native)}**',
               f'- CLEO script files (.csa/.csi/.cleo/.cs/.lua): **{len(cleo)}**',
               f'- Target-path collisions: **{len(conflicts)}** (**{summary["different_content_conflicts"]} different-content conflicts**)',
+              f'- IMG archives indexed: **{len(img_summary)}** (**{len(img_rows)} internal entries**)',
+              f'- ZIP archives checked: **{len(zip_summaries)}** (**{summary["zip_duplicate_member_paths"]} duplicate member paths**)',
               "",
               "See the uploaded artifact for full CSV/JSON reports. A filename/path collision is not automatically proof of runtime incompatibility; compare contents and test on game build 2.11.311."
           ]
