@@ -1,41 +1,40 @@
 # GTA SA Mod Audit
 
-Workspace for auditing two user-supplied GTA San Andreas Android mod archives:
-
-- GTA V Project Modpack V8
-- Saabox / Saadox 2.0 DirectX 3.0 Graphics Style
+Verified binary audit workspace for the supplied Android mod archives.
 
 ## Target setup
 
-- Game version: GTA San Andreas Android 2.11.311
-- Device target: POCO F6
-- Priorities: GTA V-style HUD and presentation; high-fidelity graphics; retain CLEO and SAUtils.
+- Requested game build: GTA San Andreas Android **2.11.311**
+- Device: POCO F6
+- Priorities: GTA V-style HUD/presentation and high-fidelity graphics.
+- Preserve: CLEO scripts and SAUtils in the source archive record.
 - Exclusion: the separate 100-CLEO menu previously rejected by the user.
 
-## Upload the archives
+## Current result
 
-Please attach the original ZIP archives to a GitHub Release named `v1.0`:
+**STOP: do not install the supplied AML/CLEO/SA_DOX stack into 2.11.311.**
 
-1. Open **Releases** → **Create a new release**.
-2. Tag: `v1.0`
-3. Title: `GTA SA Mod Archives for Audit`
-4. Attach both original ZIP files as release assets.
-5. Publish the release and share its URL.
+The game build is identified as arm64-v8a. All 20 native shared-library entries extracted from V8 and Saadox are **32-bit ARM**; no 64-bit ARM plugin is included. This prevents the supplied AML, CLEO, SAUtils, JPatch and SA_DOX runtime libraries from loading in the requested 64-bit game process.
 
-Do not put large ZIPs in the repository's normal Git files.
+The archives have been downloaded, verified, recursively extracted and hash-indexed by GitHub Actions. The full decision record is in [merge-plan/README.md](merge-plan/README.md).
 
-## Audit status
+## Archive assets
 
-No binary archive has yet been extracted or verified in this repository. The TXT inventory previously shared is a path listing only; it does not establish file contents, hashes, plugin ABI, or compatibility.
+- [Release v1.0](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/releases/tag/v1.0)
+- [Latest workflow runs](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions)
+- [Deep-inspection run 4](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41504597074)
 
-After the archives are available, the audit will record:
+The audit indexes file hashes, nested archive extraction, .so ELF architecture and dependencies, CLEO script names/strings, configurations, duplicate contents, target-path collisions, and (in the newest workflow revision) GTA IMG entries and raw ZIP central-directory duplicates.
 
-- archive contents and duplicate paths
-- CLEO scripts and plugin dependencies
-- graphics assets and configuration overlaps
-- conflicting files and merge decisions
-- installation order and staged test checklist
+## Important merge findings
+
+- 25 CLEO scripts in V8 (12 .csa, 13 .csi); retained in the audit, not runtime-compatible with the requested build through the supplied 32-bit CLEO binary.
+- The Saadox archive contains Low, Medium, High and Ultra presets; all share the same 78 of 80 files. Only Advanced.ini and shaderUniform.ini differ.
+- Saadox Ultra is the visual-priority preset for a compatible base. Do not combine its configuration with V8's separate optional SA_DOX folder.
+- SA_DOX's published Android guide warns against V8's GPS, MoreSettings, Project2DFX, Planter and SkyGFXMobile plugins.
+- The extracted game-target collision is data/popcycle.dat: main/Busy are identical; Low traffic is a different alternative.
+- Full installation and in-game performance testing have not been performed.
 
 ## Redistribution
 
-Only upload files you have permission to redistribute. If redistribution is not permitted, keep the repository private or use a permitted private transfer method.
+Only redistribute files with permission from their authors. Keep source archives private if their licenses or permissions do not allow public mirroring.
