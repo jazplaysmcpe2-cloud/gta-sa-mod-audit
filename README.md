@@ -38,3 +38,10 @@ The audit indexes file hashes, nested archive extraction, .so ELF architecture a
 ## Redistribution
 
 Only redistribute files with permission from their authors. Keep source archives private if their licenses or permissions do not allow public mirroring.
+
+
+## Detailed reports
+
+- [Compatibility matrix for GTA SA 2.11.311](audit/compatibility-matrix.md)
+- [Full merge plan and conflict decisions](merge-plan/README.md)
+- [Deep inspection run 6 and reports](https://github.com/jazplaysmcpe2-cloud/gta-sa-mod-audit/actions/runs/41505606444)
