@@ -557,8 +557,8 @@ jobs:
 
           # Use the standalone Saadox libSDX, not V8's optional legacy copy.
           sdx_candidates = [
-              p for p in (base / "nested-extracted").rglob("libSDX.so")
-              if "SA DOX 2.0" in str(p) and "2. Mod" in str(p)
+              p for p in (base / "extracted").rglob("libSDX.so")
+              if p.parent.name == "2. Mod" and p.parent.parent.name == "SA DOX 2.0"
           ]
           if len(sdx_candidates) != 1:
               raise SystemExit(f"Expected one standalone Saadox libSDX.so, got: {sdx_candidates}")
