@@ -549,7 +549,7 @@ jobs:
                   text = ini.read_text(encoding="utf-8", errors="replace")
               except OSError:
                   continue
-              if "iResolutionScale = 75" in text:
+              if ini.parent.parent.name == "4. Preset Ultra" and "iResolutionScale = 75" in text:
                   ultra_candidates.append(ini.parent)
           if len(ultra_candidates) != 1:
               raise SystemExit(f"Expected one standalone Saadox Ultra SA_DOX folder, got: {ultra_candidates}")
@@ -557,7 +557,7 @@ jobs:
 
           # Use the standalone Saadox libSDX, not V8's optional legacy copy.
           sdx_candidates = [
-              p for p in (base / "extracted").rglob("libSDX.so")
+              p for p in (base / "nested-extracted").rglob("libSDX.so")
               if "SA DOX 2.0" in str(p) and "2. Mod" in str(p)
           ]
           if len(sdx_candidates) != 1:
