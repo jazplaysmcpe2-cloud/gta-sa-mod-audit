@@ -1,89 +1,331 @@
-name: Inspect GTA SA mod archives
+name: Deep-inspect GTA SA mod archives
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-archives.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  inventory:
+  deep-inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
-      - name: Download release ZIP assets
+      - name: Install archive tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y 7zip 7zip-rar file
+
+      - name: Download release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p archives inventory
+          mkdir -p archives extracted reports
           gh release download v1.0 --repo "${GITHUB_REPOSITORY}" --pattern "*.zip" --dir archives
+          ls -lh archives
 
-      - name: Generate ZIP inventories
+      - name: Verify and extract release ZIPs
+        run: |
+          set -euo pipefail
+          for archive in archives/*.zip; do
+            echo "Testing: $archive"
+            7z t "$archive"
+            name="$(basename "$archive" .zip)"
+            mkdir -p "extracted/$name"
+            7z x -y -o"extracted/$name" "$archive"
+          done
+
+      - name: Recursively extract nested archives and build inventories
         run: |
           python3 - <<'PY'
-          import collections
+          import csv
+          import hashlib
           import json
+          import os
           import pathlib
-          import zipfile
+          import re
+          import subprocess
+          from collections import defaultdict, Counter
 
-          archives = pathlib.Path("archives")
-          output = pathlib.Path("inventory")
-          output.mkdir(exist_ok=True)
+          BASE = pathlib.Path(".").resolve()
+          EXTRACTED = BASE / "extracted"
+          NESTED = BASE / "nested-extracted"
+          REPORTS = BASE / "reports"
+          NESTED.mkdir(exist_ok=True)
+          REPORTS.mkdir(exist_ok=True)
+          ARCHIVE_EXTS = {".zip", ".rar", ".7z"}
+          MAX_DEPTH = 6
 
-          for archive in sorted(archives.glob("*.zip")):
-              with zipfile.ZipFile(archive) as zf:
-                  infos = zf.infolist()
-                  counts = collections.Counter()
-                  total_uncompressed = 0
-                  lines = [
-                      f"ARCHIVE: {archive.name}",
-                      f"ENTRIES: {len(infos)}",
-                      "",
-                      "PATH\tUNCOMPRESSED_BYTES\tCOMPRESSED_BYTES\tCRC32\tFLAGS"
-                  ]
-                  for info in infos:
-                      if info.is_dir():
-                          continue
-                      total_uncompressed += info.file_size
-                      suffix = pathlib.PurePosixPath(info.filename).suffix.lower() or "[no extension]"
-                      counts[suffix] += 1
-                      flags = []
-                      if info.flag_bits & 1:
-                          flags.append("ENCRYPTED")
-                      if info.flag_bits & 0x800:
-                          flags.append("UTF8")
-                      lines.append(
-                          f"{info.filename}\t{info.file_size}\t{info.compress_size}\t"
-                          f"{info.CRC:08x}\t{','.join(flags) or '-'}"
-                      )
+          roots = []
+          for p in sorted(EXTRACTED.iterdir()):
+              if p.is_dir():
+                  roots.append((p, p.name, 0))
 
-                  lines += [
-                      "",
-                      f"TOTAL_UNCOMPRESSED_BYTES: {total_uncompressed}",
-                      "FILE_COUNTS_BY_EXTENSION:",
-                  ]
-                  lines += [f"{ext}\t{count}" for ext, count in sorted(counts.items())]
-                  target = output / f"{archive.stem}.inventory.txt"
-                  target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          nested_status = []
+          processed = set()
+          index = 0
+          cursor = 0
 
-                  # Machine-readable summary for a second validation pass.
-                  summary = {
-                      "archive": archive.name,
-                      "entries": len(infos),
-                      "files": sum(1 for i in infos if not i.is_dir()),
-                      "total_uncompressed_bytes": total_uncompressed,
-                      "extensions": dict(sorted(counts.items())),
-                      "encrypted_files": [i.filename for i in infos if not i.is_dir() and (i.flag_bits & 1)],
-                  }
-                  (output / f"{archive.stem}.summary.json").write_text(
-                      json.dumps(summary, indent=2), encoding="utf-8"
+          # Recursively unpack inner ZIP/RAR/7z archives.
+          while cursor < len(roots):
+              scan_root, origin, depth = roots[cursor]
+              cursor += 1
+              if depth >= MAX_DEPTH:
+                  continue
+              for archive in sorted(scan_root.rglob("*")):
+                  if not archive.is_file() or archive.suffix.lower() not in ARCHIVE_EXTS:
+                      continue
+                  key = str(archive.resolve())
+                  if key in processed:
+                      continue
+                  processed.add(key)
+                  index += 1
+                  digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:20]
+                  outdir = NESTED / f"{index:04d}_{digest}"
+                  outdir.mkdir(parents=True, exist_ok=True)
+
+                  test = subprocess.run(
+                      ["7z", "t", str(archive)],
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                      text=True, errors="replace"
                   )
+                  extract = None
+                  if test.returncode == 0:
+                      extract = subprocess.run(
+                          ["7z", "x", "-y", f"-o{outdir}", str(archive)],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, errors="replace"
+                      )
+                  success = test.returncode == 0 and extract is not None and extract.returncode == 0
+                  extracted_files = sum(1 for p in outdir.rglob("*") if p.is_file()) if success else 0
+                  nested_status.append({
+                      "origin": origin,
+                      "archive_path": str(archive.relative_to(scan_root)),
+                      "archive_bytes": archive.stat().st_size,
+                      "depth": depth + 1,
+                      "test_exit_code": test.returncode,
+                      "extract_exit_code": extract.returncode if extract else None,
+                      "success": success,
+                      "files_extracted": extracted_files,
+                      "output": str(outdir.relative_to(BASE)) if success else "",
+                      "diagnostic": (test.stdout + (extract.stdout if extract else ""))[-2500:]
+                  })
+                  if success and extracted_files:
+                      roots.append((outdir, origin, depth + 1))
+
+          # Hash every unpacked file and map installed-game target paths.
+          manifest = []
+          for root, origin, depth in roots:
+              for path in sorted(root.rglob("*")):
+                  if not path.is_file():
+                      continue
+                  try:
+                      rel = path.relative_to(root).as_posix()
+                      h = hashlib.sha256()
+                      with path.open("rb") as stream:
+                          for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                              h.update(chunk)
+                      size = path.stat().st_size
+                      lower = rel.lower()
+                      marker = "com.rockstargames.gtasa/files/"
+                      target = lower.split(marker, 1)[1] if marker in lower else lower
+                      manifest.append({
+                          "source_archive": origin,
+                          "extraction_depth": depth,
+                          "archive_relative_path": rel,
+                          "target_path": target,
+                          "filename": path.name,
+                          "extension": path.suffix.lower(),
+                          "bytes": size,
+                          "sha256": h.hexdigest(),
+                          "absolute_path": str(path)
+                      })
+                  except (OSError, PermissionError) as exc:
+                      manifest.append({
+                          "source_archive": origin, "extraction_depth": depth,
+                          "archive_relative_path": str(path), "target_path": "",
+                          "filename": path.name, "extension": path.suffix.lower(),
+                          "bytes": -1, "sha256": "", "absolute_path": "",
+                          "read_error": str(exc)
+                      })
+
+          def write_csv(name, rows, fields):
+              with (REPORTS / name).open("w", newline="", encoding="utf-8") as f:
+                  w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+                  w.writeheader()
+                  w.writerows(rows)
+
+          write_csv("all-files-sha256.csv", manifest, [
+              "source_archive", "extraction_depth", "archive_relative_path",
+              "target_path", "filename", "extension", "bytes", "sha256", "read_error"
+          ])
+
+          by_target = defaultdict(list)
+          by_hash = defaultdict(list)
+          by_basename = defaultdict(list)
+          for row in manifest:
+              if row["target_path"]:
+                  by_target[row["target_path"]].append(row)
+              if row["sha256"]:
+                  by_hash[row["sha256"]].append(row)
+              by_basename[row["filename"].lower()].append(row)
+
+          conflicts = []
+          for target, entries in sorted(by_target.items()):
+              if len(entries) < 2:
+                  continue
+              hashes = sorted({x["sha256"] for x in entries})
+              conflicts.append({
+                  "target_path": target,
+                  "copies": len(entries),
+                  "distinct_hashes": len(hashes),
+                  "status": "SAME_CONTENT_DUPLICATE" if len(hashes) == 1 else "CONTENT_CONFLICT",
+                  "sources_and_hashes": " || ".join(
+                      f'{x["source_archive"]}:{x["archive_relative_path"]}:{x["sha256"]}' for x in entries
+                  )
+              })
+          write_csv("target-path-collisions.csv", conflicts,
+                    ["target_path", "copies", "distinct_hashes", "status", "sources_and_hashes"])
+
+          duplicates = []
+          for sha, entries in sorted(by_hash.items()):
+              if len(entries) > 1:
+                  duplicates.append({
+                      "sha256": sha, "copies": len(entries),
+                      "files": " || ".join(f'{x["source_archive"]}:{x["archive_relative_path"]}' for x in entries)
+                  })
+          write_csv("identical-content-duplicates.csv", duplicates, ["sha256", "copies", "files"])
+
+          basename_collisions = []
+          for name, entries in sorted(by_basename.items()):
+              if len(entries) > 1:
+                  hashes = {x["sha256"] for x in entries}
+                  basename_collisions.append({
+                      "basename": name, "copies": len(entries),
+                      "distinct_hashes": len(hashes),
+                      "status": "SAME_CONTENT" if len(hashes) == 1 else "REVIEW_DIFFERENT_CONTENT",
+                      "paths": " || ".join(f'{x["source_archive"]}:{x["archive_relative_path"]}' for x in entries)
+                  })
+          write_csv("same-basename-review.csv", basename_collisions,
+                    ["basename", "copies", "distinct_hashes", "status", "paths"])
+
+          native = []
+          cleo = []
+          for row in manifest:
+              ext = row["extension"]
+              path = pathlib.Path(row["absolute_path"]) if row["absolute_path"] else None
+              if ext == ".so" and path and path.exists():
+                  header = path.read_bytes()[:20]
+                  elf_class = "unknown"
+                  machine = "not ELF / unknown"
+                  if len(header) >= 20 and header[:4] == b"\x7fELF":
+                      elf_class = {1: "32-bit", 2: "64-bit"}.get(header[4], "unknown")
+                      endian = "little" if header[5] == 1 else "big"
+                      em = int.from_bytes(header[18:20], endian)
+                      machine = {3: "x86", 40: "ARM", 62: "x86_64", 183: "AArch64"}.get(em, f"e_machine={em}")
+                  native.append({
+                      "library": row["filename"], "source_archive": row["source_archive"],
+                      "path": row["archive_relative_path"], "bytes": row["bytes"],
+                      "elf_class": elf_class, "architecture": machine, "sha256": row["sha256"]
+                  })
+              if ext in {".csa", ".csi", ".cleo", ".cs", ".lua"}:
+                  cleo.append({k: row[k] for k in [
+                      "source_archive", "archive_relative_path", "extension", "bytes", "sha256"
+                  ]})
+
+          write_csv("native-plugins-elf.csv", native,
+                    ["library", "source_archive", "path", "bytes", "elf_class", "architecture", "sha256"])
+          write_csv("cleo-script-inventory.csv", cleo,
+                    ["source_archive", "archive_relative_path", "extension", "bytes", "sha256"])
+
+          priority_names = {
+              "handling.cfg", "handlingpc.cfg", "ped.ifp", "mainv1.scm",
+              "scriptv1.img", "timecyc.dat", "colorcycle.dat", "popcycle.dat",
+              "salodlights.dat"
+          }
+          priority = [x for x in manifest if x["filename"].lower() in priority_names]
+          write_csv("priority-file-review.csv", priority,
+                    ["source_archive", "archive_relative_path", "target_path", "bytes", "sha256"])
+
+          terms = re.compile(
+              r"2\.11\.311|2\.11|CLEO|SAUtils|SA Utils|AMLLA|JPatch|SkyGFX|"
+              r"Project2DFX|SA_DOX|DirectX|GTAV|GTA V|Android|armeabi|arm64|"
+              r"API.?level|version|dependency|require",
+              re.IGNORECASE
+          )
+          text_exts = {
+              ".txt", ".ini", ".cfg", ".dat", ".ide", ".ipl", ".fxt", ".log",
+              ".xml", ".json", ".md", ".yml", ".yaml", ".toml", ".properties",
+              ".shader", ".glsl", ".fxp", ".zon"
+          }
+          references = []
+          for row in manifest:
+              if row["extension"] not in text_exts or not row["absolute_path"]:
+                  continue
+              p = pathlib.Path(row["absolute_path"])
+              try:
+                  if p.stat().st_size > 2_000_000:
+                      continue
+                  content = p.read_text(encoding="utf-8", errors="replace")
+                  for line_no, line in enumerate(content.splitlines(), 1):
+                      if terms.search(line):
+                          references.append({
+                              "source_archive": row["source_archive"],
+                              "path": row["archive_relative_path"],
+                              "line": line_no,
+                              "text": line.strip()[:500]
+                          })
+              except OSError:
+                  pass
+          write_csv("text-reference-scan.csv", references,
+                    ["source_archive", "path", "line", "text"])
+
+          write_csv("nested-archive-report.csv", nested_status, [
+              "origin", "archive_path", "archive_bytes", "depth", "test_exit_code",
+              "extract_exit_code", "success", "files_extracted", "output", "diagnostic"
+          ])
+          ext_counts = Counter(x["extension"] or "[no extension]" for x in manifest)
+          summary = {
+              "scan_roots": [{"path": str(p.relative_to(BASE)), "origin": o, "depth": d} for p, o, d in roots],
+              "total_files_including_nested_archives": len(manifest),
+              "total_bytes": sum(max(0, x["bytes"]) for x in manifest),
+              "extensions": dict(sorted(ext_counts.items())),
+              "nested_archives_found": len(nested_status),
+              "nested_archives_successfully_extracted": sum(1 for x in nested_status if x["success"]),
+              "nested_archive_failures": [x for x in nested_status if not x["success"]],
+              "native_plugin_count": len(native),
+              "cleo_script_count": len(cleo),
+              "target_path_collisions": len(conflicts),
+              "different_content_conflicts": sum(1 for x in conflicts if x["status"] == "CONTENT_CONFLICT"),
+              "identical_sha256_duplicate_groups": len(duplicates),
+              "text_reference_matches": len(references)
+          }
+          (REPORTS / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+          summary_md = [
+              "# GTA SA archive deep-inspection",
+              f'- Files indexed (including nested archives): **{len(manifest)}**',
+              f'- Nested archives: **{len(nested_status)} found**, **{summary["nested_archives_successfully_extracted"]} extracted successfully**',
+              f'- Native .so libraries: **{len(native)}**',
+              f'- CLEO script files (.csa/.csi/.cleo/.cs/.lua): **{len(cleo)}**',
+              f'- Target-path collisions: **{len(conflicts)}** (**{summary["different_content_conflicts"]} different-content conflicts**)',
+              "",
+              "See the uploaded artifact for full CSV/JSON reports. A filename/path collision is not automatically proof of runtime incompatibility; compare contents and test on game build 2.11.311."
+          ]
+          pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(summary_md) + "\n")
+          print(json.dumps(summary, indent=2))
           PY
 
-      - name: Upload inventory reports
+      - name: Upload deep-inspection reports
         uses: actions/upload-artifact@v4
         with:
-          name: gta-sa-archive-inventories
-          path: inventory/
+          name: gta-sa-deep-inspection-${{ github.run_number }}
+          path: |
+            reports/
+            extracted/
+            nested-extracted/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
