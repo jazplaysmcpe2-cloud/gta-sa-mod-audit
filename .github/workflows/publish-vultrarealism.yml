@@ -1,0 +1,53 @@
+name: Publish VUltraRealism Mod release asset
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-vultrarealism.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Download the verified package from build run 14
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p incoming
+          gh run download 41509704000 --repo "${GITHUB_REPOSITORY}" --name gta-sa-deep-inspection-14 --dir incoming
+          PACKAGE="$(find incoming -type f -name 'VUltraRealism Mod.zip' -print -quit)"
+          test -n "$PACKAGE"
+          SIZE="$(stat -c '%s' "$PACKAGE")"
+          test "$SIZE" -eq 1452841233
+          echo "PACKAGE_PATH=$PACKAGE" >> "$GITHUB_ENV"
+          echo "PACKAGE_BYTES=$SIZE"
+          sha256sum "$PACKAGE"
+          python3 - "$PACKAGE" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              bad = z.testzip()
+              if bad:
+                  raise SystemExit(f"CRC check failed: {bad}")
+              names = z.namelist()
+              if sum(1 for n in names if n.lower().endswith((".csa", ".csi"))) != 25:
+                  raise SystemExit("Expected 25 CLEO scripts")
+              if not any(n.endswith("/files/SA_DOX/Advanced.ini") for n in names):
+                  raise SystemExit("Saadox Ultra Advanced.ini missing")
+              if not any(n.endswith("/mods/libSDX.so") for n in names):
+                  raise SystemExit("SA_DOX libSDX.so missing")
+          print("Final package CRC and key contents verified.")
+          PY
+
+      - name: Upload exact filename to existing v1.0 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.0 "$PACKAGE_PATH" --repo "${GITHUB_REPOSITORY}" --clobber
